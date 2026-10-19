@@ -1,10 +1,28 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import React from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import DiscoverPage from "@/app/discover/page";
 import { mockProjects } from "@/data/mockProjects";
 import { projectService } from "@/services/project/project.service";
 import type { SortBy } from "@/hooks/useDiscoverParams";
+
+// jsdom in the current Node version does not implement window.matchMedia, but
+// ProjectCard calls getPrefetchValue() which reads it. Provide a minimal stub.
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+});
 
 // Mock soroban so verification fetches resolve immediately
 vi.mock("@/services/stellar/soroban.service", () => ({
@@ -13,31 +31,49 @@ vi.mock("@/services/stellar/soroban.service", () => ({
   },
 }));
 
+// Render ProjectCard directly in place of LazyProjectCard: next/dynamic loads
+// its chunk asynchronously, which never resolves under fake timers.
+vi.mock("@/components/projects/LazyProjectCard", async () => {
+  const { ProjectCard } = await import("@/components/projects/ProjectCard");
+  return {
+    LazyProjectCard: ProjectCard,
+  };
+});
+
+// Mock the batch verification module so it resolves immediately in tests
+vi.mock("@/services/stellar/batch-verification", () => ({
+  batchFetchVerificationStatuses: vi.fn().mockResolvedValue({}),
+}));
+
 vi.mock("@/hooks/useDiscoverParams", () => ({
   useDiscoverParams: () => {
     const [searchInput, setSearchInputState] = React.useState("");
     const [searchQuery, setSearchQuery] = React.useState("");
-    const [category, setCategoryState] = React.useState("All");
+    const [selectedCategories, setSelectedCategories] = React.useState<string[]>([]);
     const [sortBy, setSortByState] = React.useState<SortBy>("rating");
     const [page, setPage] = React.useState(1);
 
     return {
       searchInput,
       searchQuery,
-      category,
+      categories: selectedCategories,
       tags: [],
       sortBy,
       page,
-      setTags: vi.fn(),
       setSearchInput: (value: string) => {
         setSearchInputState(value);
         setSearchQuery(value);
         setPage(1);
       },
-      setCategory: (value: string) => {
-        setCategoryState(value);
+      toggleCategory: (value: string) => {
+        setSelectedCategories((current) =>
+          current.includes(value)
+            ? current.filter((c) => c !== value)
+            : [...current, value],
+        );
         setPage(1);
       },
+      setTags: vi.fn(),
       setSortBy: (value: SortBy) => {
         setSortByState(value);
         setPage(1);
@@ -48,7 +84,7 @@ vi.mock("@/hooks/useDiscoverParams", () => ({
       clearFilters: () => {
         setSearchInputState("");
         setSearchQuery("");
-        setCategoryState("All");
+        setSelectedCategories([]);
         setPage(1);
       },
     };
@@ -63,6 +99,16 @@ vi.mock("@/hooks/useWalletPageGate", () => ({
     connectWallet: vi.fn(),
     disconnectWallet: vi.fn(),
     isConnecting: false,
+  }),
+}));
+
+vi.mock("@/hooks/useRecentViews", () => ({
+  useRecentViews: () => ({
+    recentProjects: [],
+    isLoading: false,
+    trackView: vi.fn(),
+    clearHistory: vi.fn(),
+    hasHistory: false,
   }),
 }));
 
@@ -86,21 +132,39 @@ vi.mock("@/context/comparison.context", () => ({
     selectedProjects: [],
     addProject: vi.fn(),
     removeProject: vi.fn(),
-    isSelected: vi.fn(() => false),
-    canAddMore: true,
     clearComparison: vi.fn(),
+    isSelected: () => false,
+    canAddMore: true,
+    maxSelections: 4,
   }),
+  ComparisonProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-vi.mock("@/hooks/useSavedProjects", () => ({
-  useSavedProjects: () => ({
-    isProjectSaved: vi.fn(() => false),
-    toggleSavedProject: vi.fn(),
-    canManageSavedProjects: false,
-    savedProjectIds: [],
+vi.mock("@/context/wallet.context", () => ({
+  useWallet: () => ({
+    isConnected: false,
+    isConnecting: false,
+    isFreighterAvailable: false,
+    publicKey: null,
+    walletNetwork: null,
+    isCorrectNetwork: false,
+    walletNetworkLabel: "Unknown",
+    connectWallet: vi.fn(),
+    disconnectWallet: vi.fn(),
+  }),
+  WalletProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+vi.mock("@/hooks/useWatchlist", () => ({
+  useWatchlist: () => ({
+    isOnWatchlist: vi.fn(() => false),
+    toggleWatchlist: vi.fn(),
+    canManageWatchlist: false,
+    watchlistIds: [],
+    watchlistCount: 0,
     walletAddress: null,
     isConnected: false,
-    clearSavedProjects: vi.fn(),
+    addToWatchlist: vi.fn(() => ({ success: true })),
   }),
 }));
 
@@ -127,6 +191,10 @@ async function finishInitialLoad() {
     vi.runAllTimers();
     await Promise.resolve();
   });
+  // Flush microtasks and pending React state updates
+  await act(async () => {
+    vi.advanceTimersByTime(2000);
+  });
 }
 
 describe("Discover Page - High Risk Flows", () => {
@@ -139,18 +207,19 @@ describe("Discover Page - High Risk Flows", () => {
   });
 
   describe("Loading State", () => {
-    it("displays loading spinner on initial render", () => {
+    it("displays loading skeleton on initial render", () => {
       render(<DiscoverPage />);
-      expect(screen.getByText("Loading projects...")).toBeInTheDocument();
+      // The skeleton grid uses aria-busy="true" and aria-label during loading
+      expect(screen.getByLabelText("Loading projects")).toBeInTheDocument();
     });
 
-    it("hides loading state after timeout", async () => {
+    it("hides loading skeleton after fetch completes", async () => {
       render(<DiscoverPage />);
-      expect(screen.getByText("Loading projects...")).toBeInTheDocument();
+      expect(screen.getByLabelText("Loading projects")).toBeInTheDocument();
 
       await finishInitialLoad();
 
-      expect(screen.queryByText("Loading projects...")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Loading projects")).not.toBeInTheDocument();
     });
   });
 
@@ -238,7 +307,33 @@ describe("Discover Page - High Risk Flows", () => {
       ) as HTMLInputElement;
       fireEvent.change(searchInput, { target: { value: mockProjects[0].name } });
 
-      expect(screen.getByText(mockProjects[0].name)).toBeInTheDocument();
+      // The query matches several mock projects ("Soroban Swap V2", etc.),
+      // each rendering the name (with the matched phrase highlighted).
+      expect(screen.getAllByText(mockProjects[0].name).length).toBeGreaterThan(0);
+    });
+
+    it("shows lifecycle status badges on project cards", async () => {
+      render(<DiscoverPage />);
+      await finishInitialLoad();
+
+      const deprecatedProjects = mockProjects.filter((p) => p.status === "deprecated");
+      expect(deprecatedProjects.length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Deprecated").length).toBeGreaterThan(0);
+    });
+
+    it("filters projects by lifecycle status", async () => {
+      render(<DiscoverPage />);
+      await finishInitialLoad();
+
+      const statusSelect = screen.getByLabelText(
+        /Filter by lifecycle status/i,
+      ) as HTMLSelectElement;
+      fireEvent.change(statusSelect, { target: { value: "deprecated" } });
+
+      const deprecatedProject = mockProjects.find((p) => p.status === "deprecated");
+      expect(deprecatedProject).toBeTruthy();
+      expect(screen.getByText(deprecatedProject!.name)).toBeInTheDocument();
+      expect(screen.queryByText(mockProjects[0].name)).not.toBeInTheDocument();
     });
 
     it("filters projects by category", async () => {
@@ -260,6 +355,11 @@ describe("Discover Page - High Risk Flows", () => {
     it("disables sort control during loading", () => {
       render(<DiscoverPage />);
 
+      // There are two select elements: verification filter and sort; pick the sort one
+      const comboboxes = screen.getAllByRole("combobox");
+      // Sort select is the last one (second) 
+      const sortSelect = comboboxes[comboboxes.length - 1] as HTMLSelectElement;
+      expect(sortSelect.disabled).toBe(true);
       const selects = screen.getAllByRole("combobox") as HTMLSelectElement[];
       // Both the verification-status and sort selects should be disabled during loading
       expect(selects.every((s) => s.disabled)).toBe(true);
@@ -306,7 +406,8 @@ describe("Discover Page - High Risk Flows", () => {
       render(<DiscoverPage />);
       await finishInitialLoad();
 
-      // The sort select has "Highest Rated" / "Most Popular" / "Newest" options
+      // The sort select has "Highest Rated" / "Most Popular" / "Newest" options;
+      // find it by its current value rather than by combobox index.
       const sortSelect = screen
         .getAllByRole("combobox")
         .find((el) => (el as HTMLSelectElement).value === "rating") as HTMLSelectElement;

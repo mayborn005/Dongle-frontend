@@ -1,9 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useId } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/Button";
+import { FormTimeEstimate } from "@/components/ui/FormTimeEstimate";
 import { UPDATE_TYPES, UpdateType, ProjectUpdate } from "@/types/update";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { X } from "lucide-react";
+import { updateFormSchema, type UpdateFormData } from "@/lib/schemas/update.schema";
 
 interface UpdateFormProps {
   projectId: string;
@@ -23,47 +28,44 @@ export default function UpdateForm({
   onSubmit,
   onCancel,
 }: UpdateFormProps) {
-  const [type, setType] = useState<UpdateType>(
-    initialUpdate?.type || UPDATE_TYPES.ANNOUNCEMENT
-  );
-  const [title, setTitle] = useState(initialUpdate?.title || "");
-  const [content, setContent] = useState(initialUpdate?.content || "");
-  const [version, setVersion] = useState(initialUpdate?.version || "");
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const updateTypeId = useId();
+  const versionId = useId();
+  const titleId = useId();
+  const contentId = useId();
 
-  const validate = () => {
-    const newErrors: Record<string, string> = {};
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors, isDirty, isSubmitting },
+  } = useForm<UpdateFormData>({
+    resolver: zodResolver(updateFormSchema),
+    defaultValues: {
+      type: initialUpdate?.type || UPDATE_TYPES.ANNOUNCEMENT,
+      title: initialUpdate?.title || "",
+      content: initialUpdate?.content || "",
+      version: initialUpdate?.version || "",
+    },
+  });
 
-    if (!title.trim()) {
-      newErrors.title = "Title is required";
-    } else if (title.length > 100) {
-      newErrors.title = "Title must be 100 characters or less";
-    }
+  const type = watch("type");
+  const title = watch("title");
+  const content = watch("content");
+  const version = watch("version");
 
-    if (!content.trim()) {
-      newErrors.content = "Content is required";
-    } else if (content.length < 20) {
-      newErrors.content = "Content must be at least 20 characters";
-    }
+  useUnsavedChanges(isDirty, isSubmitting);
 
-    if (type === UPDATE_TYPES.RELEASE && !version.trim()) {
-      newErrors.version = "Version is required for releases";
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const onFormSubmit = (data: UpdateFormData) => {
+    onSubmit({
+      type: data.type,
+      title: data.title,
+      content: data.content,
+      version: data.type === UPDATE_TYPES.RELEASE ? data.version : undefined,
+    });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (validate()) {
-      onSubmit({
-        type,
-        title: title.trim(),
-        content: content.trim(),
-        version: type === UPDATE_TYPES.RELEASE ? version.trim() : undefined,
-      });
-    }
+  const handleCancel = () => {
+    onCancel();
   };
 
   return (
@@ -74,7 +76,7 @@ export default function UpdateForm({
         </h3>
         <button
           type="button"
-          onClick={onCancel}
+          onClick={handleCancel}
           className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
           aria-label="Close update form"
         >
@@ -82,14 +84,22 @@ export default function UpdateForm({
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit(onFormSubmit)} className="space-y-4">
+        <FormTimeEstimate
+          fieldCount={type === UPDATE_TYPES.RELEASE ? 4 : 3}
+          completedFields={
+            1 + Number(title.length > 0) + Number(content.length > 0) +
+            (type === UPDATE_TYPES.RELEASE ? Number(version && version.length > 0) : 0)
+          }
+          secondsPerField={40}
+        />
         <div>
-          <label className="block text-sm font-medium mb-2">
+          <label htmlFor={updateTypeId} className="block text-sm font-medium mb-2">
             Update Type
           </label>
           <select
-            value={type}
-            onChange={(e) => setType(e.target.value as UpdateType)}
+            id={updateTypeId}
+            {...register("type")}
             className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
           >
             {Object.values(UPDATE_TYPES).map((t) => (
@@ -98,17 +108,20 @@ export default function UpdateForm({
               </option>
             ))}
           </select>
+          {errors.type && (
+            <p className="text-red-500 text-sm mt-1">{errors.type.message}</p>
+          )}
         </div>
 
         {type === UPDATE_TYPES.RELEASE && (
           <div>
-            <label className="block text-sm font-medium mb-2">
+            <label htmlFor={versionId} className="block text-sm font-medium mb-2">
               Version <span className="text-red-500">*</span>
             </label>
             <input
+              id={versionId}
               type="text"
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
+              {...register("version")}
               placeholder="e.g., v1.2.0"
               className={`w-full bg-white dark:bg-zinc-900 border rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
                 errors.version
@@ -117,19 +130,19 @@ export default function UpdateForm({
               }`}
             />
             {errors.version && (
-              <p className="text-red-500 text-sm mt-1">{errors.version}</p>
+              <p className="text-red-500 text-sm mt-1">{errors.version.message}</p>
             )}
           </div>
         )}
 
         <div>
-          <label className="block text-sm font-medium mb-2">
+          <label htmlFor={titleId} className="block text-sm font-medium mb-2">
             Title <span className="text-red-500">*</span>
           </label>
           <input
+            id={titleId}
             type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            {...register("title")}
             placeholder="Brief title for your update"
             maxLength={100}
             className={`w-full bg-white dark:bg-zinc-900 border rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
@@ -140,7 +153,7 @@ export default function UpdateForm({
           />
           <div className="flex justify-between mt-1">
             {errors.title ? (
-              <p className="text-red-500 text-sm">{errors.title}</p>
+              <p className="text-red-500 text-sm">{errors.title.message}</p>
             ) : (
               <span />
             )}
@@ -149,12 +162,12 @@ export default function UpdateForm({
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">
+          <label htmlFor={contentId} className="block text-sm font-medium mb-2">
             Content <span className="text-red-500">*</span>
           </label>
           <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
+            id={contentId}
+            {...register("content")}
             placeholder="Describe your update in detail..."
             rows={6}
             className={`w-full bg-white dark:bg-zinc-900 border rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none ${
@@ -164,19 +177,20 @@ export default function UpdateForm({
             }`}
           />
           {errors.content && (
-            <p className="text-red-500 text-sm mt-1">{errors.content}</p>
+            <p className="text-red-500 text-sm mt-1">{errors.content.message}</p>
           )}
         </div>
 
         <div className="flex gap-3 pt-2">
-          <Button type="submit" variant="primary" className="flex-1">
+          <Button type="submit" variant="primary" className="flex-1" disabled={isSubmitting}>
             {initialUpdate ? "Update" : "Publish"}
           </Button>
           <Button
             type="button"
             variant="outline"
-            onClick={onCancel}
+            onClick={handleCancel}
             className="flex-1"
+            disabled={isSubmitting}
           >
             Cancel
           </Button>

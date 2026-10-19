@@ -1,5 +1,4 @@
 import { Project } from "@/types/project";
-import { z } from "zod";
 
 export interface Review {
   id: string;
@@ -11,7 +10,22 @@ export interface Review {
   createdAt: string;
   helpfulVotes?: string[];
   unhelpfulVotes?: string[];
+  /** Cryptographic signature fields — present for signed submissions (#558). */
+  signedPayload?: string;
+  signature?: string;
+  signatureNonce?: string;
+  signatureTimestamp?: string;
 }
+
+/**
+ * Shape accepted when creating a review.
+ *
+ * `userAddress` is supplied separately by the caller (the connected wallet),
+ * so it is optional here for callers that still include it inline.
+ */
+export type ReviewInput = Omit<Review, "id" | "createdAt" | "userAddress"> & {
+  userAddress?: string;
+};
 
 // Validation constraints
 export const REVIEW_CONSTRAINTS = {
@@ -61,6 +75,8 @@ export interface ReviewReport {
   explanation: string;
   status: ReviewReportStatus;
   createdAt: string;
+  assignedTo?: string;
+  assignedAt?: string;
 }
 
 export interface ModerationAction {

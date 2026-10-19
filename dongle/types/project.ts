@@ -65,6 +65,55 @@ export const CATEGORY_FORM_OPTIONS = [
 ];
 
 /**
+ * Lifecycle state for a project.
+ *
+ * Projects are no longer treated as always active. A project can be archived,
+ * deprecated, paused, flagged, or removed by an owner or admin.
+ */
+export type ProjectStatus =
+  | "active"
+  | "paused"
+  | "deprecated"
+  | "archived"
+  | "flagged"
+  | "removed";
+
+export const PROJECT_STATUSES: ProjectStatus[] = [
+  "active",
+  "paused",
+  "deprecated",
+  "archived",
+  "flagged",
+  "removed",
+];
+
+export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
+  active: "Active",
+  paused: "Paused",
+  deprecated: "Deprecated",
+  archived: "Archived",
+  flagged: "Flagged",
+  removed: "Removed",
+};
+
+/**
+ * The lifecycle status of a project, or "active" when the field is absent.
+ * Older records without a `status` field are treated as active.
+ */
+export function getProjectStatus(status?: ProjectStatus): ProjectStatus {
+  return status && status in PROJECT_STATUS_LABELS ? status : "active";
+}
+
+export function getProjectStatusLabel(status?: ProjectStatus): string {
+  return PROJECT_STATUS_LABELS[getProjectStatus(status)];
+}
+
+/** True only for projects that are currently active. */
+export function isProjectActive(status?: ProjectStatus): boolean {
+  return getProjectStatus(status) === "active";
+}
+
+/**
  * Canonical Project interface.
  * Use `primaryCategory` everywhere — it holds the display-label form of the
  * category (e.g. "DeFi / DEX"). Never store raw form values ("defi") here.
@@ -73,6 +122,8 @@ export interface Project {
   id: string;
   name: string;
   primaryCategory: ProjectCategory;
+  /** Lifecycle state; defaults to "active" when omitted. */
+  status?: ProjectStatus;
   tags?: string[];
   description: string;
   rating: number;
@@ -87,6 +138,127 @@ export interface Project {
   domain?: string;
   ownerAddress?: string;
   repositoryMetadata?: RepositoryMetadata; // Cached repository metadata
+  /**
+   * Optional list of Soroban contract IDs associated with this project.
+   * Each entry must be a valid Soroban contract address: starts with 'C',
+   * followed by 55 base-32 characters (A-Z, 2-7), total length 56.
+   */
+  contractAddresses?: string[];
+}
+
+export type ClaimProofType = "website" | "repository" | "admin_review";
+
+export type ProjectClaimRequestStatus = "pending" | "approved" | "rejected";
+
+export const PROJECT_CLAIM_CONSTRAINTS = {
+  EXPLANATION_MAX_LENGTH: 2000,
+} as const;
+
+export interface ProjectClaimRequest {
+  id: string;
+  projectId: string;
+  requestedBy: string;
+  proofType: ClaimProofType;
+  proofValue: string;
+  explanation: string;
+  status: ProjectClaimRequestStatus;
+  createdAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewNote?: string;
+}
+
+export interface ProjectClaimRequestValidationError {
+  field: "projectId" | "proofType" | "proofValue" | "explanation";
+  message: string;
+}
+
+export const PROJECT_CLAIM_PROOF_OPTIONS: { value: ClaimProofType; label: string }[] = [
+  { value: "website", label: "Website or Domain Proof" },
+  { value: "repository", label: "Repository Proof" },
+  { value: "admin_review", label: "Admin Review" },
+];
+
+export type ProjectReportReason =
+  | "phishing"
+  | "impersonation"
+  | "broken_links"
+  | "fraud"
+  | "inappropriate";
+
+export type ProjectReportStatus = "pending" | "resolved" | "dismissed";
+
+export type ProjectModerationActionType = "resolved" | "dismissed";
+
+export const PROJECT_REPORT_REASONS: { value: ProjectReportReason; label: string }[] = [
+  { value: "phishing", label: "Phishing or Scam" },
+  { value: "impersonation", label: "Impersonation" },
+  { value: "broken_links", label: "Broken Links" },
+  { value: "fraud", label: "Fraud" },
+  { value: "inappropriate", label: "Inappropriate Content" },
+];
+
+export const PROJECT_REPORT_CONSTRAINTS = {
+  EXPLANATION_MAX_LENGTH: 2000,
+} as const;
+
+export interface ProjectReport {
+  id: string;
+  projectId: string;
+  reporterAddress: string;
+  reason: ProjectReportReason;
+  explanation: string;
+  status: ProjectReportStatus;
+  createdAt: string;
+}
+
+export interface ProjectModerationAction {
+  id: string;
+  reportId: string;
+  moderatorAddress: string;
+  action: ProjectModerationActionType;
+  reason: string;
+  timestamp: string;
+}
+
+export interface ProjectReportValidationError {
+  field: "reason" | "explanation";
+  message: string;
+}
+
+export type ProjectSubmissionModerationStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "flagged";
+
+export type ProjectSubmissionAssignmentAction = "assigned" | "reassigned" | "unassigned";
+
+export interface ProjectSubmission {
+  id: string;
+  projectId: string;
+  projectName: string;
+  submittedBy: string;
+  submittedAt: string;
+  status: ProjectSubmissionModerationStatus;
+  qualityScore: number;
+  flagReasons: string[];
+  statusUpdatedAt?: string;
+  statusUpdatedBy?: string;
+  rejectionReason?: string;
+  assignedTo?: string;
+  assignedAt?: string;
+}
+
+export interface ProjectSubmissionModerationAction {
+  id: string;
+  submissionId: string;
+  projectId: string;
+  moderatorAddress: string;
+  action: ProjectSubmissionModerationStatus | ProjectSubmissionAssignmentAction;
+  reason: string;
+  timestamp: string;
+  assignedTo?: string;
 }
 
 /**

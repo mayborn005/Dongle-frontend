@@ -8,6 +8,7 @@ import {
   REVIEW_REPORT_CONSTRAINTS,
 } from "@/types/review";
 import { generateId } from "@/lib/id-generator";
+import { nowUTC } from "@/lib/date";
 import { reviewService } from "./review.service";
 
 const STORAGE_KEY_REPORTS = "dongle_review_reports";
@@ -89,6 +90,8 @@ export const reviewReportService = {
         explanation: record.explanation,
         status: record.status as ReviewReportStatus,
         createdAt: record.createdAt,
+        assignedTo: typeof record.assignedTo === "string" ? record.assignedTo : undefined,
+        assignedAt: typeof record.assignedAt === "string" ? record.assignedAt : undefined,
       };
 
       validatedReports.push(report);
@@ -113,24 +116,77 @@ export const reviewReportService = {
     return this.getReports().filter((r) => r.status === "pending");
   },
 
+  assignReport(
+    reportId: string,
+    assignedBy: string,
+    assignedTo: string,
+  ): { success: boolean; error?: string } {
+    const reports = this.getReports();
+    const index = reports.findIndex((r) => r.id === reportId);
+
+    if (index === -1) {
+      return { success: false, error: "Report not found" };
+    }
+
+    // Update report assignment
+    reports[index] = {
+      ...reports[index],
+      assignedTo,
+      assignedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(reports));
+
+    return { success: true };
+  },
+
+  unassignReport(
+    reportId: string,
+    unassignedBy: string,
+  ): { success: boolean; error?: string } {
+    const reports = this.getReports();
+    const index = reports.findIndex((r) => r.id === reportId);
+
+    if (index === -1) {
+      return { success: false, error: "Report not found" };
+    }
+
+    // Remove assignment
+    reports[index] = {
+      ...reports[index],
+      assignedTo: undefined,
+      assignedAt: undefined,
+    };
+    localStorage.setItem(STORAGE_KEY_REPORTS, JSON.stringify(reports));
+
+    return { success: true };
+  },
+
+  getReportsAssignedTo(adminAddress: string): ReviewReport[] {
+    return this.getReports().filter((r) => r.assignedTo === adminAddress);
+  },
+
+  getUnassignedReports(): ReviewReport[] {
+    return this.getReports().filter((r) => !r.assignedTo);
+  },
+
   hasUserReportedReview(reviewId: string, userAddress: string): boolean {
     return this.getReports().some(
       (r) => r.reviewId === reviewId && r.reporterAddress === userAddress
     );
   },
 
-  createReport(
+  async createReport(
     data: {
       reviewId: string;
       reason: string;
       explanation: string;
     },
     reporterAddress: string
-  ): {
+  ): Promise<{
     success: boolean;
     data?: ReviewReport;
     errors?: ReviewReportValidationError[];
-  } {
+  }> {
     // Validate input
     const validationErrors = validateReport(data.reason, data.explanation);
     if (validationErrors.length > 0) {
@@ -138,7 +194,7 @@ export const reviewReportService = {
     }
 
     // Verify the review exists
-    const reviews = reviewService.getReviews();
+    const reviews = await reviewService.getReviews();
     const review = reviews.find((r) => r.id === data.reviewId);
     if (!review) {
       return {
@@ -180,7 +236,7 @@ export const reviewReportService = {
       reason: data.reason as ReviewReportReason,
       explanation: data.explanation,
       status: "pending",
-      createdAt: new Date().toISOString(),
+      createdAt: nowUTC(),
     };
 
     const reports = this.getReports();
@@ -222,7 +278,7 @@ export const reviewReportService = {
       moderatorAddress,
       action: "resolved",
       reason,
-      timestamp: new Date().toISOString(),
+      timestamp: nowUTC(),
     };
 
     const log = this.getModerationLog();
@@ -262,7 +318,7 @@ export const reviewReportService = {
       moderatorAddress,
       action: "dismissed",
       reason,
-      timestamp: new Date().toISOString(),
+      timestamp: nowUTC(),
     };
 
     const log = this.getModerationLog();

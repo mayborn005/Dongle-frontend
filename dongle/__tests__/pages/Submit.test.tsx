@@ -34,6 +34,21 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+vi.mock("@/hooks/useDraft", () => ({
+  useDraft: () => ({
+    loadedDraft: null,
+    lastSavedAt: null,
+    isSaving: false,
+    saveDraft: vi.fn(),
+    clearDraft: vi.fn(),
+    deleteDraft: vi.fn(),
+  }),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  trackProjectSubmit: vi.fn(),
+}));
+
 function mockWallet(overrides: Partial<ReturnType<typeof walletContext.useWallet>> = {}) {
   const isConnected = overrides.isConnected ?? false;
   vi.spyOn(walletContext, "useWallet").mockReturnValue({
@@ -65,7 +80,7 @@ describe("Submit Project Page - High Risk Flows", () => {
     it("displays wallet connection message when not connected", () => {
       mockWallet();
       render(<NewProjectPage />);
-      expect(screen.getByText(/connect your wallet/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/connect your wallet/i).length).toBeGreaterThan(0);
     });
 
     it("shows 'Connect Wallet' button when wallet not connected", () => {
@@ -130,13 +145,18 @@ describe("Submit Project Page - High Risk Flows", () => {
       const user = userEvent.setup({ delay: null });
       render(<NewProjectPage />);
 
-      await user.type(screen.getByLabelText(/project name/i), "Test Project");
-      await user.type(
-        screen.getByLabelText(/description/i),
-        "This is a valid description with more than twenty characters",
-      );
+      fireEvent.change(screen.getByLabelText(/project name/i), {
+        target: { value: "Test Project" },
+      });
+      fireEvent.change(screen.getByLabelText(/description/i), {
+        target: {
+          value: "This is a valid description with more than twenty characters",
+        },
+      });
       await user.selectOptions(screen.getByLabelText(/category/i), "defi");
-      await user.type(screen.getByLabelText(/Project Website/i), "https://example.com");
+      fireEvent.change(screen.getByLabelText(/Project Website/i), {
+        target: { value: "https://example.com" },
+      });
 
       const submitButton = screen.getByRole("button", { name: /Submit Registration/i });
       expect(submitButton).not.toBeDisabled();
@@ -215,6 +235,120 @@ describe("Submit Project Page - High Risk Flows", () => {
       });
       render(<NewProjectPage />);
       expect(screen.getByLabelText(/category/i)).toBeInTheDocument();
+    });
+
+    it("has an 'Add a contract address' button when no addresses are listed", () => {
+      mockWallet({ isConnected: true, publicKey: "GTEST123456789" });
+      render(<NewProjectPage />);
+      expect(
+        screen.getByRole("button", { name: /add a contract address/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("Contract Address Field Validation", () => {
+    beforeEach(() => {
+      mockWallet({ isConnected: true, publicKey: "GTEST123456789" });
+    });
+
+    it("adds a contract address input when the add button is clicked", async () => {
+      const user = userEvent.setup();
+      render(<NewProjectPage />);
+
+      await user.click(
+        screen.getByRole("button", { name: /add a contract address/i }),
+      );
+
+      // The input has aria-label="Contract address 1"
+      expect(
+        screen.getByRole("textbox", { name: /^contract address 1$/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("accepts a valid Soroban contract ID without showing an error", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(<NewProjectPage />);
+
+      await user.click(
+        screen.getByRole("button", { name: /add a contract address/i }),
+      );
+
+      // Fill all required fields so the form validates successfully
+      await user.type(screen.getByLabelText(/project name/i), "Test Project");
+      await user.type(
+        screen.getByLabelText(/description/i),
+        "This is a valid description with more than twenty characters",
+      );
+      await user.selectOptions(screen.getByLabelText(/category/i), "defi");
+      await user.type(
+        screen.getByLabelText(/Project Website/i),
+        "https://example.com",
+      );
+      // Valid Soroban contract ID: C + 55 A's = 56 chars
+      await user.type(
+        screen.getByRole("textbox", { name: /^contract address 1$/i }),
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /Submit Registration/i }));
+
+      // No contract address error should appear
+      expect(
+        screen.queryByText(/invalid soroban contract id/i),
+      ).not.toBeInTheDocument();
+    }, 15000);
+
+    it("shows a validation error for an invalid contract ID on submit", async () => {
+      const user = userEvent.setup({ delay: null });
+      render(<NewProjectPage />);
+
+      await user.click(
+        screen.getByRole("button", { name: /add a contract address/i }),
+      );
+
+      // Fill required fields
+      await user.type(screen.getByLabelText(/project name/i), "Test Project");
+      await user.type(
+        screen.getByLabelText(/description/i),
+        "This is a valid description with more than twenty characters",
+      );
+      await user.selectOptions(screen.getByLabelText(/category/i), "defi");
+      await user.type(
+        screen.getByLabelText(/Project Website/i),
+        "https://example.com",
+      );
+      // Invalid: starts with G, not C
+      await user.type(
+        screen.getByRole("textbox", { name: /^contract address 1$/i }),
+        "GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQRST",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /Submit Registration/i }));
+
+      expect(
+        await screen.findByText(/invalid soroban contract id/i),
+      ).toBeInTheDocument();
+    }, 15000);
+
+    it("allows removing a contract address input", async () => {
+      const user = userEvent.setup();
+      render(<NewProjectPage />);
+
+      await user.click(
+        screen.getByRole("button", { name: /add a contract address/i }),
+      );
+
+      expect(
+        screen.getByRole("textbox", { name: /^contract address 1$/i }),
+      ).toBeInTheDocument();
+
+      await user.click(
+        screen.getByRole("button", { name: /remove contract address 1/i }),
+      );
+
+      expect(
+        screen.queryByRole("textbox", { name: /^contract address 1$/i }),
+      ).not.toBeInTheDocument();
     });
   });
 });

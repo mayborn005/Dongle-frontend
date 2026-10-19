@@ -1,11 +1,13 @@
 "use client";
+import AddressDisplay from "@/components/ui/AddressDisplay";
 
-import React, { useState, useEffect, useRef } from "react";
+import React from "react";
 import { Flag } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SelectField } from "@/components/ui/SelectField";
 import { TextAreaField } from "@/components/ui/TextAreaField";
 import { cn } from "@/lib/utils";
+import { useModalForm } from "@/hooks/useModalForm";
 import { Review, REVIEW_REPORT_REASONS, REVIEW_REPORT_CONSTRAINTS } from "@/types/review";
 
 interface ReportReviewModalProps {
@@ -21,49 +23,28 @@ export function ReportReviewModal({
   onClose,
   onSubmit,
 }: ReportReviewModalProps) {
-  const [reason, setReason] = useState("");
-  const [explanation, setExplanation] = useState("");
-  const [error, setError] = useState("");
-
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const initialFocusRef = useRef<HTMLSelectElement>(null);
-
-  // Reset state when opened
-  useEffect(() => {
-    if (isOpen) {
-      setReason("");
-      setExplanation("");
-      setError("");
-      setTimeout(() => initialFocusRef.current?.focus(), 50);
-    }
-  }, [isOpen]);
-
-  // Handle escape key
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  const { values, setField, error, setError, dialogRef, initialFocusRef } =
+    useModalForm({
+      isOpen,
+      onClose,
+      initialValues: { reason: "", explanation: "" },
+    });
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reason) {
+    if (!values.reason) {
       setError("Please select a reason for reporting.");
       return;
     }
-    onSubmit({ reason, explanation });
+    onSubmit({ reason: values.reason, explanation: values.explanation });
   };
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150"
       onClick={onClose}
-      aria-hidden="true"
     >
       <div
         ref={dialogRef}
@@ -107,19 +88,16 @@ export function ReportReviewModal({
           <SelectField
             ref={initialFocusRef}
             label="Reason for reporting"
-            value={reason}
-            onChange={(e) => {
-              setReason(e.target.value);
-              if (error) setError("");
-            }}
+            value={values.reason}
+            onChange={(e) => setField("reason", e.target.value)}
             options={REVIEW_REPORT_REASONS}
             error={error}
           />
 
           <TextAreaField
             label="Additional explanation (optional)"
-            value={explanation}
-            onChange={(e) => setExplanation(e.target.value)}
+            value={values.explanation}
+            onChange={(e) => setField("explanation", e.target.value)}
             placeholder="Provide any additional context..."
             maxLength={REVIEW_REPORT_CONSTRAINTS.EXPLANATION_MAX_LENGTH}
           />
@@ -137,3 +115,5 @@ export function ReportReviewModal({
     </div>
   );
 }
+
+
